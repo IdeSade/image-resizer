@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/disintegration/imaging"
@@ -25,6 +26,10 @@ func NewResizeHandler(duration time.Duration) *ResizeHandler {
 }
 
 func (h *ResizeHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.URL.Path == "/favicon.ico" {
+		return // ignore favicon requests
+	}
+
 	width, height, u, err := getParams(req)
 	if err != nil {
 		writeError(w, err, http.StatusBadRequest)
@@ -33,8 +38,18 @@ func (h *ResizeHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	key := makeKey(width, height, u)
 
+	w.Header().Set("Etag", key)
+	w.Header().Set("Cache-Control", "max-age=3600")
+
 	data, ok := h.cacheImages.GetItem(key)
 	if ok {
+		if match := req.Header.Get("If-None-Match"); match != "" {
+			if strings.Contains(match, key) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+
 		log.Print("Image cache hit")
 		if Testing {
 			w.Header().Add("FromCache", "true")
