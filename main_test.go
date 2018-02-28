@@ -6,17 +6,45 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/idesade/image-resizer/handlers"
+	"github.com/pkg/errors"
 )
 
 func TestServer(t *testing.T) {
-	server := httptest.NewServer(&handlers.ResizeHandler{})
+	handlers.Testing = true
+
+	server := httptest.NewServer(handlers.NewResizeHandler(time.Second))
 	defer server.Close()
 
-	u, err := url.Parse(server.URL)
+	u, err := makeQuery(server.URL)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	err = checkRequest(u, "FromCache", "false")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = checkRequest(u, "FromCache", "true")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(2 * time.Second)
+
+	err = checkRequest(u, "FromCache", "false")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func makeQuery(serverUrl string) (string, error) {
+	u, err := url.Parse(serverUrl)
+	if err != nil {
+		return "", errors.Wrap(err, "parse serverUrl")
 	}
 
 	q := u.Query()
@@ -25,22 +53,32 @@ func TestServer(t *testing.T) {
 	q.Add("url", "https://www.datapipe.com/blog/wp-content/uploads/2015/12/big-data-will-drive-the-next-phase-of-innovation-in-mobile-computing.jpg")
 	u.RawQuery = q.Encode()
 
-	resp, err := http.Get(u.String())
+	return u.String(), nil
+}
+
+func checkRequest(url, key, value string) error {
+	resp, err := http.Get(url)
 	if err != nil {
-		t.Fatal(err)
+		return errors.Wrap(err, "get")
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		t.Fatalf("Received non-200 response: %d", resp.StatusCode)
+		return errors.Errorf("Received non-200 response: %d", resp.StatusCode)
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatal(err)
+		return errors.Wrap(err, "readAll")
 	}
 
 	if len(body) == 0 {
-		t.Fatal("Body is empty")
+		return errors.New("Body is empty")
 	}
+
+	if resp.Header.Get(key) != value {
+		return errors.Errorf("Wrong header: %s != %s", resp.Header.Get(key), value)
+	}
+
+	return nil
 }
